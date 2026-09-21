@@ -48,3 +48,12 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["server: needs a running kev.serve instance (KEV_BASE_URL)"]
+
+# PyPI's Windows torch wheels are CPU-only. Keep CUDA across uv sync/run.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32' and platform_machine == 'AMD64'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

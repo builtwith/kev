@@ -44,6 +44,13 @@ class SystemOneRequest(BaseModel):
     questions: dict[str, Question] = Field(min_length=1)
 
 
+class SystemOneBatchRequest(BaseModel):
+    states: list[JSONContent] = Field(min_length=1, max_length=64)
+    model: str = "kev-latest"
+    questions: dict[str, Question] = Field(min_length=1)
+    batch_size: int = Field(default=4, ge=1, le=32, strict=True)
+
+
 def render(v: JSONContent, indent: int = 0) -> str:
     """Flatten str | object | array into text the model sees. Field names are kept as labels."""
     pad = "  " * indent

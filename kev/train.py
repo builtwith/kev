@@ -1,4 +1,4 @@
-import argparse, contextlib, json, math, os, random, resource, sys, time
+import argparse, contextlib, json, math, os, random, sys, time
 from pathlib import Path
 from collections import Counter
 import torch
@@ -6,6 +6,14 @@ import torch.nn.functional as F
 from .data import EVAL_ONLY, build, augment, load_records, materialize, none_pair, source_seed
 from .suite import digest, load_split, write_json
 from .model import MAX_BRANCH, MAX_STATE, DecisionModel, load_tokenizer, encode
+
+
+def peak_rss_bytes():
+    if sys.platform == "win32":
+        import psutil
+        return psutil.Process().memory_info().peak_wset
+    import resource
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == "darwin" else 1024)
 
 
 def permuted_copy(rec, rng):
@@ -285,7 +293,7 @@ def main():
                "requested_records": a.epochs * len(reqs), "truncated_records": 0, "rejected_records": 0,
                "optimizer_steps": step, "forward_tokens": tokens_seen,
                "peak_device_bytes": peak_mem, "device": dev, "dtype": a.dtype, "batch": a.batch,
-               "peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == "darwin" else 1024)})
+               "peak_rss_bytes": peak_rss_bytes()})
     print("saved", a.out, flush=True)
 
 

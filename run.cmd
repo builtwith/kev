@@ -1,0 +1,1 @@
+wsl -d Debian -- bash scripts/serve-wsl.sh

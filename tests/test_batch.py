@@ -1,0 +1,79 @@
+"""Batch API contract and equivalence, with deterministic logits and no weights."""
+import pytest
+import torch
+from fastapi.testclient import TestClient
+from kev import serve
+
+
+class Model:
+    def __init__(self): self.batches = []
+
+    def encode(self, tok, rec, **kwargs):
+        if rec['state'] == 'invalid': raise ValueError('invalid input')
+        return {'ids': list(range(len(rec['state']) + 1)), 'seg': [0], 'rec': rec}
+
+    def forward_batch(self, encs):
+        assert not torch.is_grad_enabled()
+        self.batches.append(len(encs))
+        return [[torch.arange(len(q['options']), dtype=torch.float32) * len(e['ids']) / 10
+                 for q in e['rec']['questions']] for e in encs]
+
+    def probs(self, enc):
+        with torch.no_grad(): return [z.softmax(-1) for z in self.forward_batch([enc])[0]]
+
+
+@pytest.fixture
+def client(monkeypatch):
+    model = Model()
+    monkeypatch.setitem(serve.STATE, 'model', model)
+    monkeypatch.setitem(serve.STATE, 'dev', 'cpu')
+    monkeypatch.setattr(serve, 'output_tokens', lambda tok, answers: 7)
+    with TestClient(serve.app) as client:
+        yield client, model
+
+
+QUESTIONS = {
+    'category': {'type': 'choice', 'instructions': 'Category?', 'criteria': {'a': None, 'b': None}},
+    'yes': {'type': 'noul', 'instructions': 'Yes?'},
+    'score': {'type': 'score', 'instructions': 'Level?', 'criteria': ['low', 'mid', 'high']},
+}
+
+
+@pytest.mark.parametrize('temperature', [1.0, 2.0])
+def test_batch_matches_single_and_chunks(client, monkeypatch, temperature):
+    c, model = client
+    monkeypatch.setattr(serve, 'TEMPERATURE', temperature)
+    states = ['a', 'longer state', 'third', 'x', 'last']
+    r = c.post('/v1/systemone/batch', json={'states': states, 'questions': QUESTIONS, 'batch_size': 2})
+    assert r.status_code == 200
+    assert model.batches == [2, 2, 1]
+    assert r.json()['latency_ms'] >= 0
+    for state, result in zip(states, r.json()['results'], strict=True):
+        single = c.post('/v1/systemone', json={'state': state, 'questions': QUESTIONS}).json()
+        assert result == {k: v for k, v in single.items() if k != 'latency_ms'}
+
+
+@pytest.mark.parametrize('changes', [{'states': []}, {'states': ['s'] * 65}, {'batch_size': 0},
+                                     {'batch_size': 33}, {'batch_size': 1.5}, {'questions': {}}, {'states': ['invalid']}])
+def test_invalid_batch_does_not_run_model(client, changes):
+    c, model = client
+    r = c.post('/v1/systemone/batch', json={'states': ['s'], 'questions': QUESTIONS, **changes})
+    assert r.status_code == 422
+    assert not model.batches
+
+
+def test_date_facts(client, monkeypatch):
+    c, model = client
+    monkeypatch.setattr(serve, 'DATE_FACTS', True)
+    monkeypatch.setattr(serve, 'with_date_facts', lambda state: state + ' facts')
+    r = c.post('/v1/systemone/batch', json={'states': ['s'], 'questions': QUESTIONS})
+    assert r.json()['results'][0]['usage']['input_tokens'] == len('s facts') + 1
+
+
+def test_oom_explains_how_to_retry(client, monkeypatch):
+    c, model = client
+    def oom(encs): raise torch.OutOfMemoryError('oom')
+    monkeypatch.setattr(model, 'forward_batch', oom)
+    r = c.post('/v1/systemone/batch', json={'states': ['s'], 'questions': QUESTIONS})
+    assert r.status_code == 503
+    assert 'reduce batch_size' in r.json()['detail']

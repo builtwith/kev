@@ -34,6 +34,23 @@ KEV_DTYPE=bf16 uv run --extra serve python -m kev.serve --run jaredpalmer/kev-4b
 
 This starts Kev-4B locally. The first run downloads the adapter and base model. `--run` also accepts a local checkpoint directory or a Hub revision, such as `jaredpalmer/kev-4b@qwen3` for the previous generation.
 
+On Windows with an NVIDIA GPU, `uv sync` installs the CUDA 12.8 build of PyTorch. In PowerShell, start the server with:
+
+```powershell
+$env:KEV_DTYPE = "bf16"
+uv run --extra serve python -m kev.serve --run jaredpalmer/kev-4b --port 8009 --device cuda
+```
+
+Training, evaluation, and serving automatically prefer CUDA, then Apple MPS, then CPU. Pass `--device cuda` to require CUDA or `--device cpu` to use the CPU. Check your environment with `uv run python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"`; the last value should be `True` for CUDA.
+
+On this workstation, the Debian WSL environment has the Qwen3.5 CUDA kernels installed. Start it from PowerShell in this repository:
+
+```powershell
+wsl -d Debian -- bash scripts/serve-wsl.sh
+```
+
+The launcher uses `~/.local/share/kev/venv` inside WSL, reuses the Windows model cache, and serves Kev-4B at `http://localhost:8009`. It runs Python directly to preserve the Triton 3.7.1 override; syncing this environment with the base lockfile would restore Triton 3.4.0 and remove the optional kernels. The Windows `.venv` is separate.
+
 In another terminal, send it a ticket:
 
 ```bash
@@ -70,6 +87,27 @@ Example response from Kev-4B, running in bf16 on an Apple M5:
 ```
 
 The ticket mentions a return, a late delivery, and a billing problem, and the department probabilities say so. That is the point of getting probabilities back instead of a single label.
+
+### Batch Requests
+
+This fork adds batch API support, extending the model-level batching that was already partially available in upstream Kev.
+
+Use `POST /v1/systemone/batch` to answer the same questions for multiple independent states in padded model batches:
+
+```json
+{
+  "states": ["My order arrived late.", "I was charged twice."],
+  "model": "kev-latest",
+  "questions": {
+    "billing": {"type": "noul", "instructions": "Is this about billing?"}
+  },
+  "batch_size": 4
+}
+```
+
+The response contains `results` in input order, each with `model`, `answers`, and `usage`. Top-level `latency_ms` measures total model time across batches, excluding encoding and queueing. Supply 1–64 states per request; `batch_size` defaults to 4 and accepts 1–32 records per model pass. Send larger datasets in successive requests. Each record can contain multiple questions, so memory also depends on question count and input length. If the server returns HTTP 503 for device memory exhaustion, retry with a smaller batch size. Invalid inputs return HTTP 422; a failed request returns no partial results.
+
+This endpoint uses `forward_batch` without the state-prefix cache. Start with a small batch and measure throughput on your hardware; larger batches are not guaranteed to be faster.
 
 ### Python
 

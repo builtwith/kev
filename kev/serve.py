@@ -7,7 +7,7 @@ import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from .api import SystemOneRequest, to_record, to_answers, output_tokens, with_date_facts
+from .api import SystemOneRequest, SystemOneBatchRequest, to_record, to_answers, output_tokens, with_date_facts
 from .data import DISTRACTORS, NONE
 from .evaluate import load
 from .model import encode
@@ -86,6 +86,46 @@ def systemone(req: SystemOneRequest):
     ps, m = _probs(rec)
     answers = to_answers(ps, meta)
     return {"model": req.model, "answers": answers, "usage": {"input_tokens": m["tokens"], "output_tokens": output_tokens(STATE["tok"], answers)}, "latency_ms": m["latency_ms"]}
+
+
+@app.post("/v1/systemone/batch")
+def systemone_batch(req: SystemOneBatchRequest):
+    """Shared questions over independent states; results retain input order.
+
+    batch_size bounds records per model pass, not questions. This path uses
+    padded model batches rather than the single-request state-prefix cache.
+    latency_ms is total model time, excluding encoding and lock wait.
+    """
+    tok, model, dev = STATE["tok"], STATE["model"], STATE["dev"]
+    encs, metas = [], []
+    for state in req.states:
+        if DATE_FACTS: state = with_date_facts(state)
+        rec, meta = to_record(SystemOneRequest(state=state, model=req.model, questions=req.questions))
+        try: encs.append(model.encode(tok, rec, max_state=INFER_MAX_STATE, max_branch=INFER_MAX_BRANCH))
+        except ValueError as e: raise HTTPException(422, str(e))
+        metas.append(meta)
+    results, elapsed = [], 0.0
+    for start in range(0, len(encs), req.batch_size):
+        chunk = encs[start:start + req.batch_size]
+        with STATE["lock"], torch.inference_mode():
+            _sync(dev); t = time.perf_counter()
+            try:
+                logits = model.forward_batch(chunk)
+                probabilities = []
+                for row in logits:
+                    ps = [torch.softmax(z, dim=-1).cpu() for z in row]
+                    if TEMPERATURE != 1.0:
+                        ps = [(lambda q: q / q.sum())(p.clamp_min(1e-9) ** (1.0 / TEMPERATURE)) for p in ps]
+                    probabilities.append([p.tolist() for p in ps])
+                del logits
+            except torch.OutOfMemoryError:
+                raise HTTPException(503, "Batch exceeded device memory; reduce batch_size or shorten the inputs.") from None
+            _sync(dev); elapsed += time.perf_counter() - t
+        for i, ps in enumerate(probabilities):
+            answers = to_answers(ps, metas[start + i])
+            results.append({"model": req.model, "answers": answers,
+                            "usage": {"input_tokens": len(chunk[i]["ids"]), "output_tokens": output_tokens(tok, answers)}})
+    return {"results": results, "latency_ms": round(elapsed * 1000, 1)}
 
 
 class PermuteSystemOne(BaseModel):
@@ -182,6 +222,7 @@ def main():
     ap.add_argument("--run", default="runs/kev")
     ap.add_argument("--fallback", default="runs/smoke")
     ap.add_argument("--port", type=int, default=8008)
+    ap.add_argument("--device", choices=["cpu", "mps", "cuda"], default=None)
     a = ap.parse_args()
     from .evaluate import resolve_run
     is_hub_id = re.fullmatch(r"[\w.-]+/[\w.-]+", a.run) and not os.path.isdir(a.run)
@@ -189,7 +230,9 @@ def main():
     if run != a.run: print(f"{a.run} not found, falling back to {run}")
     label = run                       # what /v1/models reports: the Hub id or run path as given, not the resolved cache path
     run = resolve_run(run)
-    dev = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+    dev = a.device or ("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+    if dev == "cuda" and not torch.cuda.is_available():
+        ap.error("CUDA is unavailable in this Python environment. Install CUDA-enabled PyTorch and check your NVIDIA driver.")
     meta = torch.load(f"{run}/head.pt", map_location="cpu")
     if dev == "mps" and not os.environ.get("KEV_ATTN"): os.environ["KEV_ATTN"] = "sdpa"   # serving default on Apple GPUs (parity measured)
     tok, model = load(run, dev)
