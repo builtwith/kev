@@ -11,11 +11,13 @@ from .api import SystemOneRequest, SystemOneBatchRequest, to_record, to_answers,
 from .data import DISTRACTORS, NONE
 from .evaluate import load
 from .model import encode
+from .compression import BrotliRoute
 
 # inference limits (training used 384/640); per-branch cap mirrors Jev's ~32k, bounded by the base model window
 INFER_MAX_STATE, INFER_MAX_BRANCH = 8192, 8192
 
 app = FastAPI(title="kev")
+app.router.route_class = BrotliRoute
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 STATE = {"run": None, "tok": None, "model": None, "dev": None, "lock": threading.Lock(), "prefix_cache": {}, "prefix_hits": 0, "prefix_misses": 0}
 PREFIX_CACHE_SIZE = int(os.environ.get("KEV_PREFIX_CACHE", "4"))          # states kept (KV + hidden); 0 disables

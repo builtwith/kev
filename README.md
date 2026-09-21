@@ -397,3 +397,8 @@ Related work: [Hydragen](https://arxiv.org/abs/2402.05099), [DeFT](https://arxiv
 ## License
 
 [Apache-2.0](LICENSE). The Qwen3 and Qwen3.5 base models are also Apache-2.0. Training datasets have their own licenses; see the [model cards](docs/model-cards/).
+
+
+### Brotli Request Compression
+
+JSON endpoints accept `Content-Encoding: br` with `Content-Type: application/json`. Plain JSON remains supported. Compressed and decoded bodies are each limited to 32 MiB; invalid streams return 400, oversized bodies 413, and unsupported encodings 415. Install with `uv sync --extra serve` and restart the server to enable this.

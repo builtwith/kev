@@ -32,6 +32,7 @@ Issues = "https://github.com/jaredpalmer/kev/issues"
 
 [project.optional-dependencies]
 serve = [
+    "brotli>=1.2.0,<2",
     "fastapi>=0.115",
     "typesafe-sdk>=0.6.0",
     "uvicorn>=0.30",

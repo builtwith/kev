@@ -77,3 +77,20 @@ def test_oom_explains_how_to_retry(client, monkeypatch):
     r = c.post('/v1/systemone/batch', json={'states': ['s'], 'questions': QUESTIONS})
     assert r.status_code == 503
     assert 'reduce batch_size' in r.json()['detail']
+
+
+@pytest.mark.parametrize("endpoint,payload", [
+    ("/v1/systemone", {"state": "a", "questions": QUESTIONS}),
+    ("/v1/systemone/batch", {"states": ["a", "longer state"], "questions": QUESTIONS}),
+])
+def test_brotli_matches_plain_json(client, endpoint, payload):
+    import brotli
+    import json
+    c, model = client
+    plain = c.post(endpoint, json=payload)
+    compressed = c.post(endpoint, content=brotli.compress(json.dumps(payload).encode()),
+                        headers={"Content-Type": "application/json", "Content-Encoding": "br"})
+    assert compressed.status_code == plain.status_code == 200
+    a, b = plain.json(), compressed.json()
+    a.pop("latency_ms"); b.pop("latency_ms")
+    assert a == b
