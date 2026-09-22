@@ -16,7 +16,7 @@ from .api import Question
 MAX_BYTES = 8 * 1024 * 1024
 CACHE_SIZE = 16
 ALLOWED_HOSTS = frozenset(h.strip().lower() for h in os.environ.get(
-    "KEV_QUESTION_URL_HOSTS", "cloud.builtwith.jp").split(",") if h.strip())
+    "KEV_QUESTION_URL_HOSTS", "").split(",") if h.strip())
 _cache = OrderedDict()
 _lock = threading.Lock()
 _adapter = TypeAdapter(dict[str, Question])

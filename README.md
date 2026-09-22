@@ -409,7 +409,7 @@ The `questions` field on `/v1/systemone`, `/v1/systemone/batch`, and the
 separate/permute endpoints accepts either the existing question object or an HTTPS URL:
 
 ```json
-{"states":["A website selling shoes"],"questions":"https://cloud.builtwith.jp/raw/kev/questions3.json","batch_size":4}
+{"states":["A website selling shoes"],"questions":"https://questions.example.com/questions.json","batch_size":4}
 ```
 
 The URL must return the question object directly. Each worker downloads and validates
@@ -417,6 +417,8 @@ it once, then keeps up to 16 documents in an in-memory LRU cache (8 MiB maximum 
 download, 30-second socket timeout). Concurrent cold requests share one download;
 failed downloads are not cached. No question files are written to disk. Restart the
 worker or use a versioned URL when changing a document; cached URLs do not expire.
-Inline questions and Brotli requests remain supported. HTTPS hostnames default to
-`cloud.builtwith.jp`; set `KEV_QUESTION_URL_HOSTS` to a comma-separated list of trusted
-hosts to allow others. Redirects, credentials and nonstandard ports are rejected.
+Inline questions and Brotli requests remain supported. No URL hostnames are allowed
+by default. Before starting the server, set `KEV_QUESTION_URL_HOSTS` to a
+comma-separated list of trusted hosts, for example `questions.example.com`.
+Existing deployments using question URLs must set this environment variable when
+upgrading. Redirects, credentials and nonstandard ports are rejected.

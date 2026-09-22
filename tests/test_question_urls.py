@@ -10,11 +10,12 @@ from kev.api import SystemOneRequest, SystemOneBatchRequest
 from kev.compression import BrotliRoute
 from kev import question_urls as urls
 
-URL = 'https://cloud.builtwith.jp/raw/kev/questions3.json'
+URL = 'https://questions.example.com/questions.json'
 QUESTIONS = {'health': {'type': 'noul', 'instructions': 'Is the sky blue?'}}
 
 @pytest.fixture(autouse=True)
-def reset_cache():
+def reset_cache(monkeypatch):
+    monkeypatch.setattr(urls, 'ALLOWED_HOSTS', frozenset({'questions.example.com'}))
     urls._cache.clear()
     yield
     urls._cache.clear()
@@ -33,9 +34,9 @@ def test_concurrent_download_once_and_independent_results(download):
     values[0]['health'].instructions = 'changed'
     assert urls.resolve_questions(URL)['health'].instructions == 'Is the sky blue?'
 
-@pytest.mark.parametrize('url', ['file:///tmp/q.json', 'http://cloud.builtwith.jp/q.json',
-    'https://169.254.169.254/q.json', 'https://cloud.builtwith.jp.evil.test/q.json',
-    'https://user:pass@cloud.builtwith.jp/q.json', 'https://cloud.builtwith.jp:444/q.json'])
+@pytest.mark.parametrize('url', ['file:///tmp/q.json', 'http://questions.example.com/q.json',
+    'https://169.254.169.254/q.json', 'https://questions.example.com.evil.test/q.json',
+    'https://user:pass@questions.example.com/q.json', 'https://questions.example.com:444/q.json'])
 def test_disallowed_urls(url, download):
     with pytest.raises(urls.HTTPException) as exc:
         urls.resolve_questions(url)
@@ -90,3 +91,12 @@ def test_http_inline_url_and_brotli(download):
             assert response.status_code == 200, response.text
             assert response.json()['health']['instructions'] == QUESTIONS['health']['instructions']
     assert download.call_count == 1
+
+
+def test_no_configured_hosts_rejects_urls_but_accepts_inline(download, monkeypatch):
+    monkeypatch.setattr(urls, 'ALLOWED_HOSTS', frozenset())
+    with pytest.raises(urls.HTTPException) as exc:
+        urls.resolve_questions(URL)
+    assert exc.value.status_code == 422
+    assert urls.resolve_questions(QUESTIONS) == QUESTIONS
+    download.assert_not_called()

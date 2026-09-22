@@ -108,6 +108,7 @@ def test_question_url_matches_inline(client, monkeypatch, endpoint, payload):
     from kev import question_urls
     c, _ = client
     question_urls._cache.clear()
+    monkeypatch.setattr(question_urls, 'ALLOWED_HOSTS', frozenset({'questions.example.com'}))
     opener = Mock()
     opener.open.side_effect = lambda *a, **k: io.BytesIO(json.dumps(QUESTIONS).encode())
     monkeypatch.setattr(question_urls, 'build_opener', lambda *a: opener)
@@ -123,7 +124,7 @@ def test_question_url_matches_inline(client, monkeypatch, endpoint, payload):
     inline = c.post(endpoint, json=body(QUESTIONS))
     assert inline.status_code == 200
     for _ in range(2):
-        linked = c.post(endpoint, json=body('https://cloud.builtwith.jp/raw/kev/questions3.json'))
+        linked = c.post(endpoint, json=body('https://questions.example.com/questions.json'))
         assert linked.status_code == 200, linked.text
         assert without_timings(linked.json()) == without_timings(inline.json())
     assert opener.open.call_count == 1
