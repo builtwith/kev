@@ -12,6 +12,7 @@ from .data import DISTRACTORS, NONE
 from .evaluate import load
 from .model import encode
 from .compression import BrotliRoute
+from .question_urls import resolve_questions
 
 # inference limits (training used 384/640); per-branch cap mirrors Jev's ~32k, bounded by the base model window
 INFER_MAX_STATE, INFER_MAX_BRANCH = 8192, 8192
@@ -83,6 +84,7 @@ def _probs(rec):
 @app.post("/v1/systemone")
 def systemone(req: SystemOneRequest):
     """TypeSafe-compatible endpoint: typed questions in, typed answers out, one prefill pass."""
+    req = req.model_copy(update={"questions": resolve_questions(req.questions)})
     if DATE_FACTS: req = req.model_copy(update={"state": with_date_facts(req.state)})
     rec, meta = to_record(req)
     ps, m = _probs(rec)
@@ -99,6 +101,7 @@ def systemone_batch(req: SystemOneBatchRequest):
     latency_ms is total model time, excluding encoding and lock wait.
     """
     tok, model, dev = STATE["tok"], STATE["model"], STATE["dev"]
+    req = req.model_copy(update={"questions": resolve_questions(req.questions)})
     encs, metas = [], []
     for state in req.states:
         if DATE_FACTS: state = with_date_facts(state)
@@ -140,6 +143,7 @@ class PermuteSystemOne(BaseModel):
 @app.post("/v1/systemone/permute")
 def systemone_permute(r: PermuteSystemOne):
     """Re-run one Choice question under n_perm option orders. Returns per-order probabilities keyed by option name."""
+    r.request = r.request.model_copy(update={"questions": resolve_questions(r.request.questions)})
     q = r.request.questions.get(r.question)
     if q is None or q.type != "choice": raise HTTPException(422, "question must be an existing choice question")
     rng = random.Random(r.seed); keys = list(q.criteria); runs = []
@@ -158,6 +162,7 @@ def systemone_permute(r: PermuteSystemOne):
 @app.post("/v1/systemone/separate")
 def systemone_separate(req: SystemOneRequest):
     """Answer each question in its own request against the same state (N passes). For packed-vs-separate comparison."""
+    req = req.model_copy(update={"questions": resolve_questions(req.questions)})
     answers, tokens, ms = {}, 0, 0.0
     for qid, q in req.questions.items():
         rec, meta = to_record(req.model_copy(update={"questions": {qid: q}, **({"state": with_date_facts(req.state)} if DATE_FACTS else {})})); ps, m = _probs(rec)

@@ -94,3 +94,37 @@ def test_brotli_matches_plain_json(client, endpoint, payload):
     a, b = plain.json(), compressed.json()
     a.pop("latency_ms"); b.pop("latency_ms")
     assert a == b
+
+@pytest.mark.parametrize('endpoint,payload', [
+    ('/v1/systemone', {'state': 'a'}),
+    ('/v1/systemone/batch', {'states': ['a', 'b']}),
+    ('/v1/systemone/separate', {'state': 'a'}),
+    ('/v1/systemone/permute', {'request': {'state': 'a'}, 'question': 'category', 'n_perm': 2}),
+])
+def test_question_url_matches_inline(client, monkeypatch, endpoint, payload):
+    import io
+    import json
+    from unittest.mock import Mock
+    from kev import question_urls
+    c, _ = client
+    question_urls._cache.clear()
+    opener = Mock()
+    opener.open.side_effect = lambda *a, **k: io.BytesIO(json.dumps(QUESTIONS).encode())
+    monkeypatch.setattr(question_urls, 'build_opener', lambda *a: opener)
+    def body(questions):
+        if 'request' in payload:
+            return {**payload, 'request': {**payload['request'], 'questions': questions}}
+        return {**payload, 'questions': questions}
+    def without_timings(value):
+        if isinstance(value, dict):
+            return {k: without_timings(v) for k, v in value.items() if k != 'latency_ms'}
+        if isinstance(value, list): return [without_timings(v) for v in value]
+        return value
+    inline = c.post(endpoint, json=body(QUESTIONS))
+    assert inline.status_code == 200
+    for _ in range(2):
+        linked = c.post(endpoint, json=body('https://cloud.builtwith.jp/raw/kev/questions3.json'))
+        assert linked.status_code == 200, linked.text
+        assert without_timings(linked.json()) == without_timings(inline.json())
+    assert opener.open.call_count == 1
+    question_urls._cache.clear()

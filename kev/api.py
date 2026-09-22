@@ -41,13 +41,13 @@ Question = Union[Noul, Choice, Score]
 class SystemOneRequest(BaseModel):
     state: JSONContent
     model: str = "kev-latest"
-    questions: dict[str, Question] = Field(min_length=1)
+    questions: dict[str, Question] | str = Field(min_length=1)
 
 
 class SystemOneBatchRequest(BaseModel):
     states: list[JSONContent] = Field(min_length=1, max_length=64)
     model: str = "kev-latest"
-    questions: dict[str, Question] = Field(min_length=1)
+    questions: dict[str, Question] | str = Field(min_length=1)
     batch_size: int = Field(default=4, ge=1, le=32, strict=True)
 
 
