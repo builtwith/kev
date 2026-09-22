@@ -1,3 +1,13 @@
+# BuiltWith Kev
+
+BuiltWith Kev is our fork of [Kev](https://github.com/jaredpalmer/kev), with additions for processing many inputs and reducing network traffic:
+
+- **Brotli compression:** send compressed JSON requests with `Content-Encoding: br` to reduce upload size. Plain JSON is also supported. See [Brotli Request Compression](#brotli-request-compression).
+- **Batch requests:** submit multiple states with shared questions to `/v1/systemone/batch`, with results returned in input order. See [Batch Requests](#batch-requests).
+- **Local question caching:** supply an HTTPS URL in `questions` instead of sending the same question document with every request. Each server worker downloads and validates the document once, then caches it in memory, reducing repeated downloads and request payload sizes. Configure trusted hosts with `KEV_QUESTION_URL_HOSTS`; use versioned URLs when questions change. See [Shared Questions By URL](#shared-questions-by-url).
+
+Clone this fork with `git clone --branch batch-support https://github.com/builtwith/kev.git`. The upstream documentation follows below. See [Upstream Compatibility](docs/upstream-compatibility.md) for the latest review and selectively incorporated fixes.
+
 # Kev
 
 Small Jev-like decision models you can train and run yourself.
