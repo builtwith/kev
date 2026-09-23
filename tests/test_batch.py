@@ -129,3 +129,30 @@ def test_question_url_matches_inline(client, monkeypatch, endpoint, payload):
         assert without_timings(linked.json()) == without_timings(inline.json())
     assert opener.open.call_count == 1
     question_urls._cache.clear()
+
+@pytest.mark.parametrize('endpoint', ['/v1/systemone', '/v1/systemone/batch'])
+def test_long_state_reserves_question_budget_at_api_boundary(client, monkeypatch, endpoint):
+    from kev.model import encode
+    from types import SimpleNamespace
+    class Tokenizer:
+        def __call__(self, text, **kwargs):
+            return SimpleNamespace(input_ids=list(text.encode()))
+        def convert_tokens_to_ids(self, token):
+            return 1000 + sum(map(ord, token))
+    c, model = client
+    tok = Tokenizer()
+    def actual_encode(unused, rec, **kwargs):
+        enc = encode(tok, rec, **kwargs)
+        assert enc['state_truncated']
+        assert max(enc['pos']) < 256
+        return {**enc, 'rec': rec}
+    monkeypatch.setattr(model, 'encode', actual_encode)
+    monkeypatch.setattr(serve, 'INFER_MAX_STATE', 256)
+    monkeypatch.setattr(serve, 'INFER_MAX_BRANCH', 256)
+    monkeypatch.setattr(serve, 'PREFIX_CACHE_SIZE', 0)
+    payload = {'questions': QUESTIONS}
+    payload.update({'states': ['x' * 1000, 'y' * 2000]} if endpoint.endswith('/batch') else {'state': 'x' * 1000})
+    response = c.post(endpoint, json=payload)
+    assert response.status_code == 200, response.text
+    if endpoint.endswith('/batch'):
+        assert len(response.json()['results']) == 2

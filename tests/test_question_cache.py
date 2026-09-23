@@ -46,3 +46,40 @@ def test_concurrent_requests_cannot_corrupt_cached_values():
         values=list(pool.map(lambda _:cache.get(tok,'same',['a','b']),range(50)))
     assert all(v==values[0] for v in values);assert len(cache.entries)==1
     with pytest.raises(TypeError):values[0][0][0]=99
+
+
+@pytest.mark.parametrize('cached', [False, True])
+def test_inference_reserves_full_branch_before_truncating_page(cached):
+    tok = Tokenizer()
+    cache = QuestionTokenCache(user_tokens) if cached else None
+    rec = {'state': 'x' * 9000, 'questions': [
+        {'instr': 'q', 'options': ['a' * 1436], 'label': 0}]}
+    # q marker + instruction + option delimiters/text + decide = 1441.
+    with pytest.raises(ValueError, match='branch too long: 1441'):
+        encode(tok, rec, max_state=8192, max_branch=8192, question_cache=cache)
+    actual = encode(tok, rec, max_state=8192, max_branch=8192,
+                    question_cache=cache, fit_state_to_branch=True)
+    assert len(actual['ids']) == 8192
+    assert actual['seg'].count(0) == 6751
+    assert actual['state_truncated']
+    expected = encode(tok, {**rec, 'state': 'x' * 6750}, max_state=8192,
+                      max_branch=8192, question_cache=cache)
+    assert {k:v for k,v in actual.items() if k != 'state_truncated'} == {
+        k:v for k,v in expected.items() if k != 'state_truncated'}
+
+
+def test_inference_budget_uses_longest_question_and_preserves_short_inputs():
+    tok = Tokenizer()
+    rec = record('short')
+    assert encode(tok, rec) == encode(tok, rec, fit_state_to_branch=True)
+    rec = {'state': 'x' * 100, 'questions': [
+        {'instr': 'q', 'options': ['a'], 'label': 0},
+        {'instr': 'q', 'options': ['b' * 20], 'label': 0}]}
+    enc = encode(tok, rec, max_state=100, max_branch=50, fit_state_to_branch=True)
+    assert enc['seg'].count(0) == 25
+    assert max(enc['pos']) == 49
+    assert enc['state_truncated']
+    with pytest.raises(ValueError, match='state exceeds'):
+        encode(tok, rec, max_state=100, max_branch=50, strict=True, fit_state_to_branch=True)
+    with pytest.raises(ValueError, match='branch too long'):
+        encode(tok, rec, max_branch=25, fit_state_to_branch=True)

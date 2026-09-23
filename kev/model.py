@@ -27,7 +27,7 @@ def user_tokens(tok, text):
 OPT_NONE, OPT_DECIDE = -1, -2   # values of enc["opt"]: instruction/state tokens, and the <decide> token
 
 
-def encode(tok, rec, max_state=MAX_STATE, max_branch=MAX_BRANCH, strict=False, option_isolation=False, question_cache=None):
+def encode(tok, rec, max_state=MAX_STATE, max_branch=MAX_BRANCH, strict=False, option_isolation=False, question_cache=None, fit_state_to_branch=False):
     """Pack one record: [<state> ...] then per-question [<q> instr <opt> o </opt>... <decide>].
 
     Returns ids, seg (0 = state, k = question k), pos (branch positions restart after state),
@@ -39,6 +39,22 @@ def encode(tok, rec, max_state=MAX_STATE, max_branch=MAX_BRANCH, strict=False, o
     per-option representations and <decide>'s attention over them are permutation-invariant by construction.
     """
     state_tokens = user_tokens(tok, rec["state"])
+    # Inference truncates page text, but must reserve the full question/options
+    # first: max_branch bounds state + branch, not the question alone.
+    question_tokens = []
+    for q in rec["questions"]:
+        if question_cache is None:
+            instruction = user_tokens(tok, q["instr"])
+            options = [user_tokens(tok, o) for o in q["options"]]
+        else:
+            instruction, options = question_cache.get(tok, q["instr"], q["options"])
+        question_tokens.append((instruction, options))
+    if fit_state_to_branch:
+        longest = max((2 + len(instruction) + sum(len(o) + 2 for o in options)
+                       for instruction, options in question_tokens), default=0)
+        if longest >= max_branch:
+            raise ValueError(f"branch too long: {longest}")
+        max_state = min(max_state, max_branch - longest)
     if strict and len(state_tokens) + 1 > max_state:
         raise ValueError(f"state exceeds {max_state} tokens: {len(state_tokens) + 1}")
     S = [tok.convert_tokens_to_ids(SPECIAL[0])] + state_tokens[: max_state - 1]
@@ -46,11 +62,7 @@ def encode(tok, rec, max_state=MAX_STATE, max_branch=MAX_BRANCH, strict=False, o
     q_id, o_id, c_id, d_id = (tok.convert_tokens_to_ids(t) for t in SPECIAL[1:])
     decide_idx, opt_idx = [], []
     for k, q in enumerate(rec["questions"], start=1):
-        if question_cache is None:
-            instruction = user_tokens(tok, q["instr"])
-            options = [user_tokens(tok, o) for o in q["options"]]
-        else:
-            instruction, options = question_cache.get(tok, q["instr"], q["options"])
+        instruction, options = question_tokens[k - 1]
         instr = [q_id] + list(instruction)
         spans = [[o_id] + list(o) + [c_id] for o in options]
         br = instr + [t for sp in spans for t in sp] + [d_id]

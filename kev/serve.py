@@ -57,7 +57,7 @@ def _probs(rec):
     """One forward pass; the state prefix (tokens up to the first question) is cached across requests, so a repeated state
     only pays for its question branches. Exactness: the state's activations do not depend on the branches."""
     tok, model, dev = STATE["tok"], STATE["model"], STATE["dev"]
-    try: enc = model.encode(tok, rec, max_state=INFER_MAX_STATE, max_branch=INFER_MAX_BRANCH)
+    try: enc = model.encode(tok, rec, max_state=INFER_MAX_STATE, max_branch=INFER_MAX_BRANCH, fit_state_to_branch=True)
     except ValueError as e: raise HTTPException(422, str(e))
     Ls = enc["seg"].count(0); key = (tuple(enc["ids"][:Ls]), bool(enc.get("option_isolation")))
     cache = STATE["prefix_cache"]
@@ -106,7 +106,7 @@ def systemone_batch(req: SystemOneBatchRequest):
     for state in req.states:
         if DATE_FACTS: state = with_date_facts(state)
         rec, meta = to_record(SystemOneRequest(state=state, model=req.model, questions=req.questions))
-        try: encs.append(model.encode(tok, rec, max_state=INFER_MAX_STATE, max_branch=INFER_MAX_BRANCH))
+        try: encs.append(model.encode(tok, rec, max_state=INFER_MAX_STATE, max_branch=INFER_MAX_BRANCH, fit_state_to_branch=True))
         except ValueError as e: raise HTTPException(422, str(e))
         metas.append(meta)
     results, elapsed = [], 0.0
