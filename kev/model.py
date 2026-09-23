@@ -27,7 +27,7 @@ def user_tokens(tok, text):
 OPT_NONE, OPT_DECIDE = -1, -2   # values of enc["opt"]: instruction/state tokens, and the <decide> token
 
 
-def encode(tok, rec, max_state=MAX_STATE, max_branch=MAX_BRANCH, strict=False, option_isolation=False):
+def encode(tok, rec, max_state=MAX_STATE, max_branch=MAX_BRANCH, strict=False, option_isolation=False, question_cache=None):
     """Pack one record: [<state> ...] then per-question [<q> instr <opt> o </opt>... <decide>].
 
     Returns ids, seg (0 = state, k = question k), pos (branch positions restart after state),
@@ -46,8 +46,13 @@ def encode(tok, rec, max_state=MAX_STATE, max_branch=MAX_BRANCH, strict=False, o
     q_id, o_id, c_id, d_id = (tok.convert_tokens_to_ids(t) for t in SPECIAL[1:])
     decide_idx, opt_idx = [], []
     for k, q in enumerate(rec["questions"], start=1):
-        instr = [q_id] + user_tokens(tok, q["instr"])
-        spans = [[o_id] + user_tokens(tok, o) + [c_id] for o in q["options"]]
+        if question_cache is None:
+            instruction = user_tokens(tok, q["instr"])
+            options = [user_tokens(tok, o) for o in q["options"]]
+        else:
+            instruction, options = question_cache.get(tok, q["instr"], q["options"])
+        instr = [q_id] + list(instruction)
+        spans = [[o_id] + list(o) + [c_id] for o in options]
         br = instr + [t for sp in spans for t in sp] + [d_id]
         if len(br) > max_branch - len(S):
             raise ValueError(f"branch too long: {len(br)}")
@@ -162,7 +167,8 @@ class DecisionModel(nn.Module):
 
     def encode(self, tok, rec, **kw):
         """encode() with this model's option-isolation setting; use this from serving/eval code."""
-        return encode(tok, rec, option_isolation=self.option_isolation, **kw)
+        return encode(tok, rec, option_isolation=self.option_isolation,
+                      question_cache=getattr(self, "question_token_cache", None), **kw)
 
     def hidden(self, enc):
         return self.hidden_batch([enc])[0, : len(enc["ids"])]

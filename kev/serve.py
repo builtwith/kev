@@ -243,6 +243,12 @@ def main():
     meta = torch.load(f"{run}/head.pt", map_location="cpu")
     if dev == "mps" and not os.environ.get("KEV_ATTN"): os.environ["KEV_ATTN"] = "sdpa"   # serving default on Apple GPUs (parity measured)
     tok, model = load(run, dev)
+    from .question_cache import QuestionTokenCache
+    from .model import user_tokens
+    model.question_token_cache = QuestionTokenCache(user_tokens)
+    from .inference import enable_pointwise_compile
+    optimized = enable_pointwise_compile(model)
+    if optimized: print(f"CUDA pointwise fusion: {optimized} modules; BF16 rounding preserved", flush=True)
     STATE.update(run=label, tok=tok, model=model, dev=dev, base=meta["base"], lora=meta["lora"])
     print(f"serving {label} ({run}) on {dev} :{a.port}")
     import uvicorn
